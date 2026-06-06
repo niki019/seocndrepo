@@ -1,0 +1,230 @@
+{
+  "app": "MedConnect",
+  "version": "1.0",
+  "description": "Data model for the MedConnect doctor-patient consultation and tracking platform",
+  "entities": {
+    "USER": {
+      "description": "Core authentication record for all app users",
+      "fields": {
+        "user_id": { "type": "uuid", "constraint": "PK", "note": "Auto-generated" },
+        "full_name": { "type": "string", "maxLength": 120 },
+        "email": { "type": "string", "constraint": "UNIQUE", "maxLength": 255 },
+        "phone": { "type": "string", "maxLength": 20 },
+        "password_hash": { "type": "string" },
+        "security_pin_hash": { "type": "string", "note": "6-digit PIN, hashed" },
+        "role": { "type": "enum", "values": ["patient", "doctor", "assistant"] },
+        "face_id_enabled": { "type": "boolean", "default": false },
+        "is_active": { "type": "boolean", "default": true },
+        "created_at": { "type": "timestamp" },
+        "updated_at": { "type": "timestamp" }
+      }
+    },
+    "PATIENT_PROFILE": {
+      "description": "Extended profile for patients — linked 1:1 to USER where role=patient",
+      "fields": {
+        "profile_id": { "type": "uuid", "constraint": "PK" },
+        "user_id": { "type": "uuid", "constraint": "FK → USER.user_id", "unique": true },
+        "dob": { "type": "date" },
+        "gender": { "type": "enum", "values": ["male", "female", "non_binary", "prefer_not_to_say"] },
+        "country": { "type": "string", "maxLength": 80 },
+        "timezone": { "type": "string", "example": "America/New_York" },
+        "preferred_language": { "type": "string", "maxLength": 10, "example": "en" },
+        "blood_group": { "type": "string", "maxLength": 5, "example": "O+" },
+        "avatar_url": { "type": "string", "nullable": true }
+      }
+    },
+    "DOCTOR_PROFILE": {
+      "description": "Extended profile for doctors — linked 1:1 to USER where role=doctor",
+      "fields": {
+        "profile_id": { "type": "uuid", "constraint": "PK" },
+        "user_id": { "type": "uuid", "constraint": "FK → USER.user_id", "unique": true },
+        "license_id": { "type": "string", "constraint": "UNIQUE", "maxLength": 60 },
+        "specialisations": { "type": "string[]", "example": ["Cardiology", "Internal Medicine"] },
+        "experience_years": { "type": "integer" },
+        "rating": { "type": "float", "note": "Computed average, 0.0–5.0" },
+        "consultation_fee": { "type": "decimal", "precision": 10, "scale": 2 },
+        "currency": { "type": "string", "maxLength": 3, "example": "INR" },
+        "bio": { "type": "string", "nullable": true },
+        "avatar_url": { "type": "string", "nullable": true }
+      }
+    },
+    "COMPLAINT": {
+      "description": "Voice-recorded patient problem disclosure before a booking",
+      "fields": {
+        "complaint_id": { "type": "uuid", "constraint": "PK" },
+        "patient_id": { "type": "uuid", "constraint": "FK → PATIENT_PROFILE.profile_id" },
+        "voice_url": { "type": "string", "note": "Stored audio file URL" },
+        "transcript": { "type": "text", "note": "Auto-transcribed text from voice input" },
+        "extracted_symptoms": { "type": "string[]", "note": "AI-extracted symptom keywords" },
+        "severity": { "type": "enum", "values": ["mild", "moderate", "severe"] },
+        "matched_specialisation": { "type": "string", "note": "System-suggested doctor specialisation" },
+        "created_at": { "type": "timestamp" }
+      }
+    },
+    "DOCTOR_SLOT": {
+      "description": "Available consultation time slots defined by the doctor",
+      "fields": {
+        "slot_id": { "type": "uuid", "constraint": "PK" },
+        "doctor_id": { "type": "uuid", "constraint": "FK → DOCTOR_PROFILE.profile_id" },
+        "datetime_utc": { "type": "timestamp", "note": "Always stored in UTC" },
+        "duration_minutes": { "type": "integer", "default": 30 },
+        "is_booked": { "type": "boolean", "default": false }
+      }
+    },
+    "BOOKING": {
+      "description": "Confirmed appointment linking patient, doctor, complaint, and slot",
+      "fields": {
+        "booking_id": { "type": "uuid", "constraint": "PK" },
+        "patient_id": { "type": "uuid", "constraint": "FK → PATIENT_PROFILE.profile_id" },
+        "doctor_id": { "type": "uuid", "constraint": "FK → DOCTOR_PROFILE.profile_id" },
+        "complaint_id": { "type": "uuid", "constraint": "FK → COMPLAINT.complaint_id" },
+        "slot_id": { "type": "uuid", "constraint": "FK → DOCTOR_SLOT.slot_id", "unique": true },
+        "status": { "type": "enum", "values": ["pending_payment", "confirmed", "cancelled", "completed"] },
+        "cancellation_reason": { "type": "string", "nullable": true },
+        "created_at": { "type": "timestamp" }
+      }
+    },
+    "PAYMENT": {
+      "description": "Payment record for a booking. Consultation only confirmed on success.",
+      "fields": {
+        "payment_id": { "type": "uuid", "constraint": "PK" },
+        "booking_id": { "type": "uuid", "constraint": "FK → BOOKING.booking_id", "unique": true },
+        "amount": { "type": "decimal", "precision": 10, "scale": 2 },
+        "currency": { "type": "string", "maxLength": 3, "example": "INR" },
+        "status": { "type": "enum", "values": ["pending", "success", "failed", "refunded"] },
+        "gateway": { "type": "enum", "values": ["razorpay", "stripe"] },
+        "gateway_ref": { "type": "string", "note": "External transaction ID from gateway" },
+        "invoice_url": { "type": "string", "nullable": true },
+        "paid_at": { "type": "timestamp", "nullable": true }
+      }
+    },
+    "CONSULTATION": {
+      "description": "The actual video consultation session derived from a booking",
+      "fields": {
+        "consultation_id": { "type": "uuid", "constraint": "PK" },
+        "booking_id": { "type": "uuid", "constraint": "FK → BOOKING.booking_id", "unique": true },
+        "start_time": { "type": "timestamp" },
+        "end_time": { "type": "timestamp", "nullable": true },
+        "recording_url": { "type": "string", "nullable": true, "note": "Stored only with patient consent" },
+        "recording_consent": { "type": "boolean", "default": false },
+        "doctor_notes": { "type": "text", "nullable": true, "note": "Live notes during call" },
+        "status": { "type": "enum", "values": ["scheduled", "in_progress", "completed", "no_show"] }
+      }
+    },
+    "REPORT": {
+      "description": "Post-consultation report auto-generated from doctor notes; reviewed and published by doctor",
+      "fields": {
+        "report_id": { "type": "uuid", "constraint": "PK" },
+        "consultation_id": { "type": "uuid", "constraint": "FK → CONSULTATION.consultation_id", "unique": true },
+        "diagnosis": { "type": "text" },
+        "summary": { "type": "text", "note": "Doctor's summary of the session" },
+        "action_items": { "type": "string[]", "note": "Recommended next steps e.g. 'Schedule follow-up in 2 weeks'" },
+        "pdf_url": { "type": "string", "nullable": true },
+        "published_at": { "type": "timestamp", "nullable": true }
+      }
+    },
+    "PRESCRIPTION": {
+      "description": "Prescription header linked to a report; contains one or more medicines",
+      "fields": {
+        "prescription_id": { "type": "uuid", "constraint": "PK" },
+        "report_id": { "type": "uuid", "constraint": "FK → REPORT.report_id", "unique": true },
+        "issued_at": { "type": "timestamp" },
+        "notes": { "type": "text", "nullable": true, "note": "General prescription notes from doctor" }
+      }
+    },
+    "MEDICINE": {
+      "description": "Individual medicine line item within a prescription",
+      "fields": {
+        "medicine_id": { "type": "uuid", "constraint": "PK" },
+        "prescription_id": { "type": "uuid", "constraint": "FK → PRESCRIPTION.prescription_id" },
+        "name": { "type": "string", "maxLength": 120, "example": "Amoxicillin" },
+        "dose": { "type": "string", "maxLength": 40, "example": "500mg" },
+        "frequency": { "type": "string", "maxLength": 80, "example": "3 times daily" },
+        "duration_days": { "type": "integer", "example": 7 },
+        "instructions": { "type": "string", "maxLength": 255, "example": "Take after meals" },
+        "category": { "type": "string", "maxLength": 80, "example": "Antibiotic" },
+        "refills_remaining": { "type": "integer", "default": 0 },
+        "refill_requested_at": { "type": "timestamp", "nullable": true }
+      }
+    },
+    "FOLLOW_UP": {
+      "description": "Scheduled follow-up attached to a consultation; triggers notifications to both parties",
+      "fields": {
+        "followup_id": { "type": "uuid", "constraint": "PK" },
+        "consultation_id": { "type": "uuid", "constraint": "FK → CONSULTATION.consultation_id" },
+        "scheduled_at": { "type": "timestamp" },
+        "status": { "type": "enum", "values": ["pending", "completed", "missed", "rescheduled"] },
+        "channels": { "type": "enum[]", "values": ["in_app", "email", "sms", "whatsapp"] },
+        "notified_doctor_at": { "type": "timestamp", "nullable": true, "note": "24h before" },
+        "notified_patient_at": { "type": "timestamp", "nullable": true, "note": "48h and 2h before" },
+        "notes": { "type": "text", "nullable": true }
+      }
+    },
+    "WEEKLY_CHECKIN": {
+      "description": "Weekly patient progress form triggered every 7 days post-consultation",
+      "fields": {
+        "checkin_id": { "type": "uuid", "constraint": "PK" },
+        "patient_id": { "type": "uuid", "constraint": "FK → PATIENT_PROFILE.profile_id" },
+        "consultation_id": { "type": "uuid", "constraint": "FK → CONSULTATION.consultation_id" },
+        "week_number": { "type": "integer", "note": "1 = first week after consultation" },
+        "submitted_at": { "type": "timestamp", "nullable": true },
+        "status": { "type": "enum", "values": ["pending", "submitted", "missed"] }
+      }
+    },
+    "CHECKIN_RESPONSE": {
+      "description": "Individual question-answer pair within a weekly check-in form",
+      "fields": {
+        "response_id": { "type": "uuid", "constraint": "PK" },
+        "checkin_id": { "type": "uuid", "constraint": "FK → WEEKLY_CHECKIN.checkin_id" },
+        "question_number": { "type": "integer", "note": "1–10" },
+        "question_text": { "type": "string" },
+        "options": { "type": "string[]", "note": "4–5 MCQ options presented to patient" },
+        "selected_option": { "type": "string" }
+      }
+    },
+    "VITAL_TREND": {
+      "description": "Longitudinal health metric entries shown as weekly trend chart on patient timeline",
+      "fields": {
+        "vital_id": { "type": "uuid", "constraint": "PK" },
+        "patient_id": { "type": "uuid", "constraint": "FK → PATIENT_PROFILE.profile_id" },
+        "metric": { "type": "enum", "values": ["blood_pressure_systolic", "blood_pressure_diastolic", "heart_rate", "glucose", "weight", "temperature", "oxygen_saturation"] },
+        "value": { "type": "float" },
+        "unit": { "type": "string", "maxLength": 20, "example": "mg/dL" },
+        "recorded_at": { "type": "timestamp" },
+        "source": { "type": "enum", "values": ["manual", "device", "lab"] }
+      }
+    }
+  },
+  "relationships": [
+    { "from": "USER", "to": "PATIENT_PROFILE", "type": "one-to-one", "via": "user_id" },
+    { "from": "USER", "to": "DOCTOR_PROFILE", "type": "one-to-one", "via": "user_id" },
+    { "from": "PATIENT_PROFILE", "to": "COMPLAINT", "type": "one-to-many", "via": "patient_id" },
+    { "from": "COMPLAINT", "to": "BOOKING", "type": "one-to-many", "via": "complaint_id" },
+    { "from": "DOCTOR_PROFILE", "to": "DOCTOR_SLOT", "type": "one-to-many", "via": "doctor_id" },
+    { "from": "DOCTOR_SLOT", "to": "BOOKING", "type": "one-to-one", "via": "slot_id" },
+    { "from": "PATIENT_PROFILE", "to": "BOOKING", "type": "one-to-many", "via": "patient_id" },
+    { "from": "DOCTOR_PROFILE", "to": "BOOKING", "type": "one-to-many", "via": "doctor_id" },
+    { "from": "BOOKING", "to": "PAYMENT", "type": "one-to-one", "via": "booking_id" },
+    { "from": "BOOKING", "to": "CONSULTATION", "type": "one-to-one", "via": "booking_id" },
+    { "from": "CONSULTATION", "to": "REPORT", "type": "one-to-one", "via": "consultation_id" },
+    { "from": "REPORT", "to": "PRESCRIPTION", "type": "one-to-one", "via": "report_id" },
+    { "from": "PRESCRIPTION", "to": "MEDICINE", "type": "one-to-many", "via": "prescription_id" },
+    { "from": "CONSULTATION", "to": "FOLLOW_UP", "type": "one-to-many", "via": "consultation_id" },
+    { "from": "PATIENT_PROFILE", "to": "WEEKLY_CHECKIN", "type": "one-to-many", "via": "patient_id" },
+    { "from": "CONSULTATION", "to": "WEEKLY_CHECKIN", "type": "one-to-many", "via": "consultation_id" },
+    { "from": "WEEKLY_CHECKIN", "to": "CHECKIN_RESPONSE", "type": "one-to-many", "via": "checkin_id" },
+    { "from": "PATIENT_PROFILE", "to": "VITAL_TREND", "type": "one-to-many", "via": "patient_id" }
+  ],
+  "weekly_checkin_questions": [
+    { "number": 1, "question": "How are your symptoms compared to last week?", "options": ["Much better", "Slightly better", "Same", "Slightly worse", "Much worse"] },
+    { "number": 2, "question": "How would you rate your pain level today?", "options": ["No pain (0)", "Mild (1–3)", "Moderate (4–6)", "Severe (7–9)", "Unbearable (10)"] },
+    { "number": 3, "question": "How consistently did you take your medication this week?", "options": ["Every dose on time", "Missed 1–2 doses", "Missed 3–4 doses", "Took less than half", "Did not take at all"] },
+    { "number": 4, "question": "Have you experienced any side effects from your medication?", "options": ["No side effects", "Mild, manageable", "Moderate, bearable", "Severe, affecting daily life", "Stopped medication due to side effects"] },
+    { "number": 5, "question": "How would you rate your sleep quality this week?", "options": ["Excellent", "Good", "Fair", "Poor", "Very poor"] },
+    { "number": 6, "question": "How has your appetite been this week?", "options": ["Normal", "Slightly reduced", "Significantly reduced", "No appetite", "Increased appetite"] },
+    { "number": 7, "question": "Have you developed any new symptoms this week?", "options": ["No new symptoms", "1 new mild symptom", "1 new severe symptom", "Multiple new symptoms", "Emergency-level symptoms"] },
+    { "number": 8, "question": "How would you rate your energy levels this week?", "options": ["Optimal", "Good", "Fair", "Low", "Very low / Exhausted"] },
+    { "number": 9, "question": "How has your mood been this week?", "options": ["Very positive", "Generally good", "Neutral", "Low / Anxious", "Very low / Distressed"] },
+    { "number": 10, "question": "Overall, how would you rate your health this week?", "options": ["Excellent", "Good", "Fair", "Poor", "Very poor"] }
+  ]
+}
